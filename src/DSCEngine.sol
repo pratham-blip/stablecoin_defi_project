@@ -1,6 +1,9 @@
 //SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.0;
 
+import {DecentralisedStableCoin} from "./DecentralisedStableCoin.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /**
  *
  *@title DSCEngine
@@ -21,15 +24,32 @@ pragma solidity ^0.8.0;
  * @notice This contract is based on the MakerDAO DSS system
  */
 
-contract DSCEngine {
+contract DSCEngine is ReentrancyGuard {
     error DSC__EngineMoreThanZero();
     error DSC__TokenAddressesAndPriceFeedsLengthMismatch();
+    error DSC__EngineNotAllowedToken();
+    error DSC__EngineTransferFailed();
 
     mapping(address token => address priceFeed) private s_priceFeeds;
+    mapping(address user => mapping(address token => uint256 amount))
+        private s_collateralDeposited;
+
+    DecentralisedStableCoin private i_dsc;
+
+    event Collateraldeposited(
+        address indexed user,
+        address indexed token,
+        uint256 amount
+    );
 
     modifier moreThanZero(uint256 amount) {
         if (amount == 0) revert DSC__EngineMoreThanZero();
         _;
+    }
+
+    modifier isAllowedToken(address token) {
+        if (s_priceFeeds[token] == address(0))
+            revert DSC__EngineNotAllowedToken();
     }
 
     constructor(
@@ -41,7 +61,7 @@ contract DSCEngine {
             revert DSC__TokenAddressesAndPriceFeedsLengthMismatch();
         }
 
-        for (int i = 0; i < tokenAddresses.length; i++) {
+        for (uint256 i = 0; i < tokenAddresses.length; i++) {
             s_priceFeeds[tokenAddresses[i]] = priceFeedAddresses[i];
         }
     }
@@ -51,11 +71,37 @@ contract DSCEngine {
     function depositCollateral(
         address tokenCollateralAddress,
         uint256 amountCollateral
-    ) external moreThanZero(amountCollateral) {}
+    )
+        external
+        moreThanZero(amountCollateral)
+        isAllowedToken(tokenCollateralAddress)
+        nonReentrant
+    {
+        s_collateralDeposited[msg.sender][
+            tokenCollateralAddress
+        ] += amountCollateral;
+
+        emit Collateraldeposited(
+            msg.sender,
+            tokenCollateralAddress,
+            amountCollateral
+        );
+
+        bool success = IERC20(tokenCollateralAddress).transferFrom(
+            msg.sender,
+            address(this),
+            amountCollateral
+        );
+        if (!success) {
+            revert DSC__EngineTransferFailed();
+        }
+    }
 
     function redeemDscAndWithdrawCollateral() external {}
 
     function redeemCollateral() external {}
+
+    function mintDsc(uint256 amountDscToMint) external {}
 
     function burnDsc() external {}
 
